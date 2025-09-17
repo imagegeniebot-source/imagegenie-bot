@@ -1,4 +1,4 @@
-# app.py - Version complète avec WhatsApp fonctionnel
+# app.py - Version avec debug amélioré
 import os
 import sqlite3
 from datetime import datetime
@@ -21,9 +21,22 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True") == "True"
 
+# Vérification au démarrage
+print("="*50)
+print("🔧 Configuration chargée:")
+print(f"GOOGLE_API_KEY: {'✅ Présente' if GOOGLE_API_KEY else '❌ MANQUANTE'}")
+print(f"WHATSAPP_TOKEN: {'✅ Présent' if WHATSAPP_TOKEN else '❌ MANQUANT'}")
+print(f"PHONE_NUMBER_ID: {PHONE_NUMBER_ID if PHONE_NUMBER_ID else '❌ MANQUANT'}")
+print(f"DEBUG_MODE: {DEBUG_MODE}")
+print("="*50)
+
 # Configurer Google AI Studio
-genai.configure(api_key=GOOGLE_API_KEY)
-text_model = genai.GenerativeModel('gemini-pro')
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+    text_model = genai.GenerativeModel('gemini-pro')
+else:
+    print("⚠️ ATTENTION: Google API Key manquante!")
+    text_model = None
 
 def init_db():
     """Initialise la base de données SQLite"""
@@ -55,7 +68,17 @@ def init_db():
     print("✅ Base de données initialisée")
 
 def send_whatsapp_message(to_number, message):
-    """Envoie un message WhatsApp"""
+    """Envoie un message WhatsApp avec debug amélioré"""
+    
+    # Log détaillé
+    print(f"\n📤 Tentative d'envoi à {to_number}")
+    print(f"Token présent: {'Oui' if WHATSAPP_TOKEN else 'NON - ERREUR!'}")
+    print(f"Phone ID: {PHONE_NUMBER_ID}")
+    
+    if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
+        print("❌ ERREUR: Token ou Phone ID manquant!")
+        return False
+    
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     
     headers = {
@@ -67,18 +90,51 @@ def send_whatsapp_message(to_number, message):
         "messaging_product": "whatsapp",
         "to": to_number,
         "type": "text",
-        "text": {"body": message}
+        "text": {"body": message[:4096]}  # Limite WhatsApp
     }
     
-    response = requests.post(url, headers=headers, json=data)
-    
-    if DEBUG_MODE:
-        print(f"📤 Message envoyé: {response.status_code}")
-    
-    return response.status_code == 200
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        
+        print(f"Status code: {response.status_code}")
+        
+        if response.status_code == 200:
+            print(f"✅ Message envoyé avec succès!")
+            return True
+        else:
+            print(f"❌ Erreur d'envoi: {response.status_code}")
+            print(f"Détails: {response.text}")
+            
+            # Analyse de l'erreur
+            try:
+                error_data = response.json()
+                error = error_data.get('error', {})
+                print(f"Type d'erreur: {error.get('type')}")
+                print(f"Message: {error.get('message')}")
+                
+                if 'token' in error.get('message', '').lower():
+                    print("⚠️ PROBLÈME DE TOKEN - Renouveler le token WhatsApp!")
+                if 'phone' in error.get('message', '').lower():
+                    print("⚠️ PROBLÈME DE NUMÉRO - Vérifier Phone Number ID!")
+                    
+            except:
+                pass
+                
+            return False
+            
+    except Exception as e:
+        print(f"❌ Exception lors de l'envoi: {str(e)}")
+        return False
 
 def send_whatsapp_image(to_number, image_url, caption=""):
-    """Envoie une image WhatsApp"""
+    """Envoie une image WhatsApp avec debug"""
+    
+    print(f"\n📤 Tentative d'envoi d'image à {to_number}")
+    
+    if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
+        print("❌ ERREUR: Token ou Phone ID manquant!")
+        return False
+    
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     
     headers = {
@@ -92,19 +148,32 @@ def send_whatsapp_image(to_number, image_url, caption=""):
         "type": "image",
         "image": {
             "link": image_url,
-            "caption": caption
+            "caption": caption[:1024]  # Limite caption
         }
     }
     
-    response = requests.post(url, headers=headers, json=data)
-    
-    if DEBUG_MODE:
-        print(f"📤 Image envoyée: {response.status_code}")
-    
-    return response.status_code == 200
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        
+        print(f"Status code: {response.status_code}")
+        
+        if response.status_code == 200:
+            print(f"✅ Image envoyée avec succès!")
+            return True
+        else:
+            print(f"❌ Erreur d'envoi image: {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Exception: {str(e)}")
+        return False
 
 def enhance_prompt(prompt):
     """Améliore le prompt avec Gemini Pro"""
+    if not text_model:
+        print("⚠️ Model non disponible, utilisation du prompt original")
+        return prompt
+        
     try:
         request = f"""
         Améliore ce prompt pour génération d'image. 
@@ -151,6 +220,8 @@ def generate_image(prompt, phone):
         prompt_hash = hashlib.md5(enhanced.encode()).hexdigest()[:8]
         image_url = f"https://picsum.photos/seed/{prompt_hash}/512/512"
         
+        print(f"🎨 Image générée: {image_url}")
+        
         # Décrémenter tokens et sauvegarder
         c.execute("UPDATE users SET tokens = tokens - 1, total_generated = total_generated + 1 WHERE phone = ?", (phone,))
         
@@ -176,6 +247,7 @@ def generate_image(prompt, phone):
         }
         
     except Exception as e:
+        print(f"❌ Erreur génération: {str(e)}")
         return {
             "success": False,
             "message": f"Erreur: {str(e)}"
@@ -185,10 +257,15 @@ def handle_whatsapp_message(from_number, text):
     """Traite les messages WhatsApp entrants"""
     text = text.lower().strip()
     
-    print(f"📥 Traitement: {from_number} -> {text}")
+    print(f"\n{'='*50}")
+    print(f"📥 NOUVEAU MESSAGE")
+    print(f"De: {from_number}")
+    print(f"Texte: {text}")
+    print(f"{'='*50}")
     
     # Commandes
     if text in ['/start', 'start', 'salut', 'hello', 'bonjour', 'bonsoir']:
+        print("→ Commande START détectée")
         welcome = """🎨 *Bienvenue sur ImageGenie Bot!*
 
 Je transforme vos idées en images avec l'IA! ✨
@@ -207,9 +284,11 @@ Tapez: /image [votre description]
 /aide - Obtenir de l'aide
 /prix - Voir les tarifs"""
         
-        send_whatsapp_message(from_number, welcome)
+        result = send_whatsapp_message(from_number, welcome)
+        print(f"Résultat envoi: {'✅ Succès' if result else '❌ Échec'}")
     
     elif text.startswith('/image ') or text.startswith('image '):
+        print("→ Commande IMAGE détectée")
         prompt = text.replace('/image ', '').replace('image ', '')
         
         if len(prompt) < 3:
@@ -234,6 +313,7 @@ Tapez: /image [votre description]
             send_whatsapp_message(from_number, result['message'])
     
     elif text in ['/solde', 'solde', '/balance', 'balance']:
+        print("→ Commande SOLDE détectée")
         # Vérifier le solde
         conn = sqlite3.connect('imagegenie.db')
         c = conn.cursor()
@@ -261,6 +341,7 @@ Tapez /recharge pour acheter des tokens"""
         send_whatsapp_message(from_number, message)
     
     elif text in ['/aide', 'aide', '/help', 'help']:
+        print("→ Commande AIDE détectée")
         help_message = """📖 *Guide d'utilisation*
 
 *Générer une image:*
@@ -269,41 +350,33 @@ Tapez /recharge pour acheter des tokens"""
 *Exemples:*
 • /image un coucher de soleil sur la plage
 • /image logo moderne pour boutique
-• /image portrait femme africaine souriante
 
 *Autres commandes:*
 • /solde - Voir vos tokens
 • /prix - Voir les tarifs
-• /recharge - Acheter des tokens
-
-*Tips:*
-- Soyez précis dans vos descriptions
-- Mentionnez le style souhaité
-- Ajoutez des couleurs
-
-*Support:* Répondez avec votre question"""
+• /recharge - Acheter des tokens"""
         
         send_whatsapp_message(from_number, help_message)
     
     elif text in ['/prix', 'prix', '/price', 'price', '/tarif', 'tarif']:
+        print("→ Commande PRIX détectée")
         pricing = """💳 *Nos Tarifs*
 
 📦 *Pack Découverte*
 500 FCFA = 5 tokens
 
 📦 *Pack Standard*
-1000 FCFA = 12 tokens (+2 bonus!)
+1000 FCFA = 12 tokens
 
 📦 *Pack Pro*
-2500 FCFA = 35 tokens (+5 bonus!)
-
-*1 token = 1 image*
+2500 FCFA = 35 tokens
 
 Pour commander: /recharge"""
         
         send_whatsapp_message(from_number, pricing)
     
     elif text in ['/recharge', 'recharge', '/buy', 'buy', '/acheter']:
+        print("→ Commande RECHARGE détectée")
         recharge = """💳 *Recharge de Tokens*
 
 *Étape 1:* Choisissez votre pack
@@ -312,26 +385,18 @@ Pour commander: /recharge"""
 • 2500 F = 35 tokens
 
 *Étape 2:* Envoyez à
-• MTN MoMo: 97 XX XX XX
-• Moov Money: 95 XX XX XX
+• MTN: 97 XX XX XX
+• Moov: 95 XX XX XX
 
-*Étape 3:* Envoyez votre reçu ici
-
-⚡ Activation en 5 minutes!"""
+*Étape 3:* Envoyez le reçu ici"""
         
         send_whatsapp_message(from_number, recharge)
     
     else:
-        # Message non reconnu
-        default = """❓ Je n'ai pas compris votre message.
+        print("→ Message non reconnu")
+        default = """❓ Je n'ai pas compris.
 
-*Pour générer une image:*
-/image [votre description]
-
-*Exemple:*
-/image un chat mignon
-
-Tapez /aide pour plus d'infos"""
+Tapez /aide pour voir les commandes"""
         
         send_whatsapp_message(from_number, default)
 
@@ -340,8 +405,12 @@ def home():
     return jsonify({
         "status": "online",
         "service": "ImageGenie WhatsApp Bot",
-        "version": "1.0",
-        "ready": True
+        "version": "1.1",
+        "ready": True,
+        "config": {
+            "whatsapp_configured": bool(WHATSAPP_TOKEN),
+            "google_ai_configured": bool(GOOGLE_API_KEY)
+        }
     })
 
 @app.route('/webhook', methods=['GET', 'POST'])
@@ -377,27 +446,36 @@ def webhook():
                 if msg_type == 'text':
                     text = message['text']['body']
                     
-                    if DEBUG_MODE:
-                        print(f"📱 Message de {from_number}: {text}")
-                    
                     # Traiter le message
                     handle_whatsapp_message(from_number, text)
             
         except Exception as e:
-            print(f"Erreur webhook: {e}")
+            print(f"❌ Erreur webhook: {e}")
+            print(f"Data reçue: {json.dumps(data, indent=2)}")
         
         return 'OK', 200
 
+# Route de test
+@app.route('/test-message', methods=['GET'])
+def test_message():
+    """Route pour tester l'envoi de messages"""
+    phone = request.args.get('phone', '22991132843')
+    message = request.args.get('message', 'Test depuis API')
+    
+    result = send_whatsapp_message(phone, message)
+    
+    return jsonify({
+        "success": result,
+        "phone": phone,
+        "message": message
+    })
+
 if __name__ == '__main__':
     print("="*50)
-    print("🚀 ImageGenie WhatsApp Bot")
+    print("🚀 ImageGenie WhatsApp Bot v1.1")
     print("="*50)
     
     init_db()
-    
-    if DEBUG_MODE:
-        print("🔧 Mode DEBUG activé")
-        print("📍 URL locale: http://localhost:5000")
     
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=DEBUG_MODE)
